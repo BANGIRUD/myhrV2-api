@@ -123,6 +123,15 @@ import {
   getFingerErrorEvidenceByPath,
   downloadFingerErrorExample,
   importFingerError,
+  listFingerErrorGroup,
+  approveFingerErrorGroup,
+  rejectFingerErrorGroup,
+  listFingerErrorDepartment,
+  approveFingerErrorDepartment,
+  rejectFingerErrorDepartment,
+  listFingerErrorDepartmentExceptions,
+  createFingerErrorDepartmentException,
+  deleteFingerErrorDepartmentException,
 } from '../controllers/hrFingerError.js';
 
 const router = express.Router();
@@ -227,9 +236,14 @@ router.put('/permit/:id', verifyToken, updatePermit);
 
 router.get('/finger-error', verifyToken, listFingerError);
 router.get('/finger-error/section', verifyToken, listFingerErrorSection);
+router.get('/finger-error/group', verifyToken, listFingerErrorGroup);
+router.get('/finger-error/department', verifyToken, listFingerErrorDepartment);
 router.get('/finger-error/hr/export', verifyToken, exportFingerErrorHr);
 router.get('/finger-error/hr', verifyToken, listFingerErrorHr);
 router.get('/finger-error/example', verifyToken, downloadFingerErrorExample);
+router.get('/finger-error/department-exceptions', verifyToken, listFingerErrorDepartmentExceptions);
+router.post('/finger-error/department-exceptions', verifyToken, createFingerErrorDepartmentException);
+router.delete('/finger-error/department-exceptions/:id', verifyToken, deleteFingerErrorDepartmentException);
 router.get('/finger-error/lookup', verifyToken, lookupFingerErrorWorker);
 router.post(
   '/finger-error/import',
@@ -239,6 +253,10 @@ router.post(
 );
 router.post('/finger-error/:id/approve-section', verifyToken, approveFingerErrorSection);
 router.post('/finger-error/:id/reject-section', verifyToken, rejectFingerErrorSection);
+router.post('/finger-error/:id/approve-group', verifyToken, approveFingerErrorGroup);
+router.post('/finger-error/:id/reject-group', verifyToken, rejectFingerErrorGroup);
+router.post('/finger-error/:id/approve-department', verifyToken, approveFingerErrorDepartment);
+router.post('/finger-error/:id/reject-department', verifyToken, rejectFingerErrorDepartment);
 router.post('/finger-error/:id/approve-hr', verifyToken, approveFingerErrorHr);
 router.post('/finger-error/:id/reject-hr', verifyToken, rejectFingerErrorHr);
 router.get('/finger-error/evidence', verifyToken, getFingerErrorEvidenceByPath);

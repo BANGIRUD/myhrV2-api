@@ -356,7 +356,12 @@ async function decideFingerError(req, res, action) {
         message: `${action} finger_error id=${req.params.id}`,
       });
     }
-    if (response?.success && action === 'APPROVE_SECTION') {
+    if (
+      response?.success &&
+      (action === 'APPROVE_SECTION' ||
+        action === 'APPROVE_GL' ||
+        action === 'APPROVE_DEPT')
+    ) {
       notifyFingerErrorHr(Number(req.params.id), jobsiteOf(req)).catch((notifyError) => {
         console.error('finger_error hr notify failed:', notifyError.message);
       });
@@ -380,6 +385,180 @@ export function approveFingerErrorSection(req, res) {
 
 export function rejectFingerErrorSection(req, res) {
   return decideFingerError(req, res, 'REJECT_SECTION');
+}
+
+/** GET /api/hr/finger-error/group — Group Leader / Unit Head (LS) */
+export async function listFingerErrorGroup(req, res) {
+  try {
+    const now = new Date();
+    const defaultMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const monthRaw = String(req.query.month ?? '').trim() || defaultMonth;
+    if (!/^\d{4}-\d{2}$/.test(monthRaw)) {
+      return res.status(400).json({
+        success: false,
+        message: 'month must be YYYY-MM',
+      });
+    }
+
+    const scope = await resolveSectionScope(req.user);
+    const result = await executeHrSp('FINGER_ERROR_SP', 'SELECT_GL', {
+      MONTH: monthRaw,
+      DEPARTMENT: parseIdList(req.query.department).join(',') || null,
+      SECTION: parseIdList(req.query.section).join(',') || null,
+      JOB_RANK: req.query.job_rank?.trim() || null,
+      PROGRESS: req.query.progress?.trim() || null,
+      STATUS_WORKER: req.query.status_worker?.trim() || null,
+      SEARCH: req.query.q?.trim() || null,
+      PAGE: Number(req.query.page) || 1,
+      PAGE_SIZE: Number(req.query.page_size) || 0,
+      SCOPE_SECTIONS: scopeToCsv(scope),
+      BY_USER: actorOf(req),
+      BY_JOBSITE: jobsiteOf(req),
+    });
+
+    res.json({
+      success: true,
+      message: 'Fetched fingerprint group queue',
+      data: result.recordsets?.[0] ?? [],
+      meta: {
+        total: result.recordsets?.[1]?.[0]?.total_count ?? 0,
+        month: monthRaw,
+        scoped: !scope.unrestricted,
+        scope_sections: scope.unrestricted ? null : scope.sectionIds.length,
+        status_counts: fingerStatusCounts(result),
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
+  }
+}
+
+export function approveFingerErrorGroup(req, res) {
+  return decideFingerError(req, res, 'APPROVE_GL');
+}
+
+export function rejectFingerErrorGroup(req, res) {
+  return decideFingerError(req, res, 'REJECT_GL');
+}
+
+/** GET /api/hr/finger-error/department — Department Head */
+export async function listFingerErrorDepartment(req, res) {
+  try {
+    const now = new Date();
+    const defaultMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const monthRaw = String(req.query.month ?? '').trim() || defaultMonth;
+    if (!/^\d{4}-\d{2}$/.test(monthRaw)) {
+      return res.status(400).json({
+        success: false,
+        message: 'month must be YYYY-MM',
+      });
+    }
+
+    const scope = await resolveSectionScope(req.user);
+    const result = await executeHrSp('FINGER_ERROR_SP', 'SELECT_DEPT', {
+      MONTH: monthRaw,
+      DEPARTMENT: parseIdList(req.query.department).join(',') || null,
+      SECTION: parseIdList(req.query.section).join(',') || null,
+      JOB_RANK: req.query.job_rank?.trim() || null,
+      PROGRESS: req.query.progress?.trim() || null,
+      STATUS_WORKER: req.query.status_worker?.trim() || null,
+      SEARCH: req.query.q?.trim() || null,
+      PAGE: Number(req.query.page) || 1,
+      PAGE_SIZE: Number(req.query.page_size) || 0,
+      SCOPE_SECTIONS: scopeToCsv(scope),
+      BY_USER: actorOf(req),
+      BY_JOBSITE: jobsiteOf(req),
+    });
+
+    res.json({
+      success: true,
+      message: 'Fetched fingerprint department queue',
+      data: result.recordsets?.[0] ?? [],
+      meta: {
+        total: result.recordsets?.[1]?.[0]?.total_count ?? 0,
+        month: monthRaw,
+        scoped: !scope.unrestricted,
+        scope_sections: scope.unrestricted ? null : scope.sectionIds.length,
+        status_counts: fingerStatusCounts(result),
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
+  }
+}
+
+export function approveFingerErrorDepartment(req, res) {
+  return decideFingerError(req, res, 'APPROVE_DEPT');
+}
+
+export function rejectFingerErrorDepartment(req, res) {
+  return decideFingerError(req, res, 'REJECT_DEPT');
+}
+
+/** GET /api/hr/finger-error/department-exceptions */
+export async function listFingerErrorDepartmentExceptions(req, res) {
+  try {
+    const result = await executeHrSp('FINGER_ERROR_SP', 'LIST_DEPT_EXCEPTION', {
+      BY_USER: actorOf(req),
+      BY_JOBSITE: jobsiteOf(req),
+    });
+    res.json({
+      success: true,
+      message: 'Fetched department fingerprint exceptions',
+      data: result.recordsets?.[0] ?? [],
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
+  }
+}
+
+/** POST /api/hr/finger-error/department-exceptions */
+export async function createFingerErrorDepartmentException(req, res) {
+  try {
+    const result = await executeHrSp('FINGER_ERROR_SP', 'INSERT_DEPT_EXCEPTION', {
+      SECTION: req.body?.section_id != null ? String(req.body.section_id) : null,
+      JOB_RANK: req.body?.job_rank != null ? String(req.body.job_rank) : null,
+      BY_USER: actorOf(req),
+      BY_JOBSITE: jobsiteOf(req),
+    });
+    const response = spResultRow(result);
+    return res.status(response?.success ? 201 : 400).json({
+      success: Boolean(response?.success),
+      message: response?.message || 'Failed to add exception.',
+      data: response?.id != null ? { id: response.id } : null,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message,
+    });
+  }
+}
+
+/** DELETE /api/hr/finger-error/department-exceptions/:id */
+export async function deleteFingerErrorDepartmentException(req, res) {
+  if (!isValidId(req.params.id)) {
+    return res.status(400).json({ success: false, message: 'Invalid exception id.' });
+  }
+  try {
+    const result = await executeHrSp('FINGER_ERROR_SP', 'DELETE_DEPT_EXCEPTION', {
+      ID: Number(req.params.id),
+      BY_USER: actorOf(req),
+      BY_JOBSITE: jobsiteOf(req),
+    });
+    const response = spResultRow(result);
+    return res.status(response?.success ? 200 : 400).json({
+      success: Boolean(response?.success),
+      message: response?.message || 'Failed to delete exception.',
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message,
+    });
+  }
 }
 
 /** GET /api/hr/finger-error/hr */
