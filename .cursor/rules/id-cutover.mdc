@@ -1,0 +1,27 @@
+---
+description: dbo → hr ID cutover — preserve integer ids on every operational table migration
+alwaysApply: true
+---
+
+# ID cutover (dbo → hr)
+
+When migrating or syncing operational tables from `dbo` to `hr`, **always preserve `hr.id = dbo.id`**.
+
+Full checklist: `docs/ID_CUTOVER.md`. Summary also in `AGENTS.md` (*ID cutover policy*).
+
+## Must
+
+- Sync/seed insert with `SET IDENTITY_INSERT` and `id = dbo.id`, `legacy_id = dbo.id`.
+- Copy `ref_id` / int FKs as-is (same id space as parent table).
+- After adding a mirrored table, extend `scripts/hr/seed_verify_id_alignment.js` (`ID_TABLES` / `REF_PAIRS`) and run it.
+- No silent remap (new IDENTITY for dbo rows). Collision → fail/skip + realign/reseed.
+
+## Must not
+
+- Regenerate PKs for operational mirrors and only store old id in `legacy_id` (that broke `users`; fixed via realign).
+- Force-preserve ids on `hr.menus` (use `menu_code`), or on new catalogs (`levels`, `edit_policy*`).
+
+## Users special case
+
+- Seeds must keep `id = legacy_id`. Drift: `node scripts/hr/seed_realign_users_ids.js`.
+- Sickness/permit `by_user` / `by_verified*` still join `hr.users.legacy_id` until those columns are cut over.

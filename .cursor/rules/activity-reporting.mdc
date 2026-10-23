@@ -1,0 +1,170 @@
+---
+description: MYHR activity tracker format — /add item then /report
+alwaysApply: true
+---
+
+# Activity reporting (MYHR)
+
+After meaningful work, end of session, or when user asks for a report — output copy-paste blocks in tracker format below.
+
+Same format as REPORTING / PTW trackers. Project name is always `MYHR` (one project for `myhr-frontend`, `myhr-backend`, legacy `myhr_api`, legacy `myhrs`).
+
+## Add item first
+
+Items **must exist** before `/report`. If missing, output `/add item` blocks first — never `/report` alone.
+Check **Tracker memory (state)** at the bottom: if `category + name` is listed there, it already exists → `/report` only.
+
+## Categories (exact spelling)
+
+| Category    | Scope                                                              |
+| ----------- | ------------------------------------------------------------------ |
+| `Front End` | React pages, components, hooks, context, services, layout, routing |
+| `Back End`  | Express routes, controllers, middleware, services, API             |
+| `Database`  | `scripts/hr/*.sql`, SP, views, migrations, seeds, Azure sync       |
+| `Other`     | Docs (`AGENTS.md`, `README`), deploy, `.env.example`, non-code     |
+
+## Item = module scope, not task detail
+
+Keep Gantt lean: **item name = broad module** (1 Gantt row). Put daily specifics in the **notes** field (after last `|`).
+
+| Bad (too specific)             | Good (scope)      | Notes in `/report`                                        |
+| ------------------------------ | ----------------- | --------------------------------------------------------- |
+| Fix Sakit Evidence Upload      | Sakit             | multipart bukti upload + evidence_paths on SELECT/GET     |
+| API Pola Kerja Generate Roster | Pola Kerja        | GENERATE_PREVIEW / GENERATE in POLA_KERJA_SP + endpoints  |
+| Level Permissions Matrix Page  | Level Permissions | matrix editor, superadmin-only PUT                        |
+
+Rules:
+
+- **1 scope = 1 Gantt row** — merge sub-tasks under same parent item.
+- Item name: **1–3 words** (`Login`, `Users`, `Menus`, `Sakit`, `Pola Kerja`, `Dashboard`).
+- No `Fix`, `API`, `Halaman`, `Redeploy`, `SP`, `Script` in item name — put in notes.
+- Continuation work → update existing scope item, do not create new item.
+- Same scope in FE + BE + DB → one item per category with the **same name** (e.g. `Sakit` ×3).
+
+## `/add item` format
+
+**One block, one or many items.** Write `project` once at the top; repeat the field group per item (each item starts with `category`).
+
+```
+/add item
+project : MYHR
+
+category : Front End
+name : Sakit
+start date : 2026-10-10
+end date : 2026-10-17
+weight : 8
+priority : HIGH
+pic : 0216691
+type : NEW
+
+category : Back End
+name : Sakit
+start date : 2026-10-10
+end date : 2026-10-17
+weight : 8
+priority : HIGH
+pic : 0216691
+type : NEW
+
+category : Database
+name : Sakit
+start date : 2026-10-10
+end date : 2026-10-17
+weight : 6
+priority : HIGH
+pic : 0216691
+type : NEW
+```
+
+- Blank line between items is optional.
+- Per item: `category`, `name`, `start date`, `end date`, `weight`, `priority`, `pic`, `type` — each may differ.
+- `name` must match exactly in `/add item` and `/report`.
+- `type`: `NEW` | `MODIFIKASI`; `priority`: `LOW` | `MEDIUM` | `HIGH`.
+- **`MODIFIKASI`** — item was already **100%** and work resumed; re-`/add item` with this type (not `UPDATE`).
+- Default `pic : 0216691`. Dates `YYYY-MM-DD`; `end date` = realistic estimate, not today by default.
+- Prefer **one multi-item block** when registering several scopes at once.
+
+## `/report` format
+
+```
+/report
+project : MYHR
+
+category : Back End
+user : 0216691
+task :
+Sakit | 60>85 | CANCEL action + evidence download endpoint
+Dashboard | 90>100 | ATTENDANCE computed in hr; parity dbo vs hr OK
+
+status : UPDATE
+```
+
+- Progress: `before>after` (0–100). Notes = today's specific work.
+- **Item complete:** always `before>100 | notes` (after = `100`).
+- One line per scope item; group by category (one `category` block per category, each with its own `user` / `task`).
+
+## Tracker memory (agent)
+
+1. Remember reported items and last progress per `category + name` → table **Tracker memory (state)** below.
+2. After the user confirms a `/report` was sent, update that table (this is the only rule edit allowed without asking).
+3. User says item is **complete** → `/report` with `before>100 | notes`.
+4. Item already **100%** and changes again → `/add item` with `type: MODIFIKASI` first, then `/report`.
+5. Copies of this rule exist in `myhr-frontend`, `myhr_api`, `myhrs`; the **state table lives only here** (`myhr-backend`).
+
+## When to offer report
+
+1. After meaningful feature/fix (not every small commit).
+2. User asks for a report (`report`, `tracker`, `progress`).
+3. End of long session.
+
+## File → category mapping
+
+| Repo             | Path                                                                 | Category   |
+| ---------------- | -------------------------------------------------------------------- | ---------- |
+| `myhr-frontend`  | `src/pages/`, `components/`, `hooks/`, `context/`, `services/`, `layout/`, `config/`, `App.tsx` | Front End |
+| `myhr-backend`   | `controllers/`, `routes/`, `middleware/`, `services/`, `config/`, `index.js` | Back End |
+| `myhr-backend`   | `scripts/hr/*.sql`, `run_migrate.js`, `seed_*_from_azure.js`, `dashboard_parity.js` | Database |
+| `myhr_api`       | `src/**` (legacy bridge for CodeIgniter)                              | Back End → item `Legacy API` |
+| `myhrs`          | `application/controllers`, `application/models`, `application/libraries` | Back End → item `Legacy Web` |
+| `myhrs`          | `application/views`, `public/js`, `public/css`                       | Front End → item `Legacy Web` |
+| any              | `AGENTS.md`, `README.md`, `*.md`, `.env.example`, deploy             | Other |
+
+## Scope reference items
+
+| Category  | Items                                                                                                                                                              |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Front End | Login, Sidebar, Dashboard, Profile, Jobsites, Levels, Users, Menus, Enums, Menu Privilege, Level Permissions, Edit Policy, Pola Kerja, Roster Kerja, Sakit, Legacy Web |
+| Back End  | Auth, Menus, Users, Levels, Enums, Structure, Dashboard, Level Permissions, Edit Policy, Pola Kerja, Roster Kerja, Sakit, Legacy API, Legacy Web                   |
+| Database  | Schema, Users, Menus, Levels, Enums, Structure, Workers, Dashboard, Level Permissions, Edit Policy, Pola Kerja, Roster Kerja, Sakit, Seed Data                   |
+| Other     | Documentation, Deploy, Migration                                                                                                                                   |
+
+Notes:
+- **Dashboard** (Database) = `DASHBOARD_SP` + `workers_standby`, `workers_roster_kerja`, `attendance_ratio`, attendance sources (scripts 28–35).
+- **Seed Data** = Azure → local `dbo` → `hr` seeds (`seed_*_from_azure.js`, `*_sync_*_from_dbo.sql`).
+- **Schema** = `hr` schema, jobsites, login views, level_legacy_map (scripts 01–13, 27).
+- **Migration** (Other) = myhrs CodeIgniter → React/Node migration docs (`PROJECT_OVERVIEW.md`, `MIGRATION.md`, `PHASE_B_*`).
+- Legacy `myhr_api` / `myhrs` only when actually touched; do **not** track TailAdmin demo leftovers or disabled ticketing/FLEET code.
+
+## Checklist
+
+- [ ] Item name = scope, not task detail
+- [ ] Details in notes, not item name
+- [ ] `/add item` exists for each `/report` line (check state table; multi-item block OK)
+- [ ] Category spelling exact
+- [ ] Progress and notes are factual
+- [ ] State table updated after user confirms send
+
+## Tracker memory (state)
+
+Last known progress per `category + name`. `—` = not yet registered in tracker (needs `/add item` first).
+
+| Category  | Name  | Last progress | Note                                                                                          |
+| --------- | ----- | ------------- | --------------------------------------------------------------------------------------------- |
+| Front End | Sakit | 98            | export Personalia; filter tipe karyawan hanya untuk cakupan semua; sel HR saat ditolak HR     |
+| Back End  | Sakit | 98            | GET `/sakit/hr/export`; `status_worker` diabaikan bila akun sudah terkunci SIS atau LS       |
+| Database  | Sakit | 97            | sync id 1:1 dbo↔hr; INSERT/approve child isi key_id SHA1 (legacy)                             |
+| Database  | Users | 100           | seed IDENTITY_INSERT id=legacy_id; realign local bulk + remap audit                           |
+| Database  | Seed Data | 80        | seed_realign_users_ids + seed_verify; sickness photos; roster/pola di verify list             |
+| Database  | Permit | 40           | sync id window; INSERT/approve child isi key_id SHA1 (legacy)                                 |
+| Other     | Documentation | 60       | MODULE_PATTERN_SAKIT + docs/ID_CUTOVER.md + rule id-cutover.mdc                               |
