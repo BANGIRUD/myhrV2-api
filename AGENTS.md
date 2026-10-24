@@ -220,11 +220,15 @@ Run in numeric order (`run_migrate.js` does this). Key files:
 | `seed_attendance_from_azure.js`, `dashboard_parity.js` | Azure→dbo→hr seed (read-only Azure) and dbo-vs-hr parity check |
 | `seed_*_from_azure.js` | **Read-only** pulls from Azure MYHR into local `hr.*` |
 | `seed_realign_users_ids.js` | One-shot local repair: `hr.users.id = legacy_id` + remap audit `*_by` |
-| `seed_verify_id_alignment.js` | Check wave-1 + wave-2 id/`ref_id` alignment vs dbo (users, sickness/permit + photos, workers, structure, enums, cuti period/master/kerja) |
+| `seed_verify_id_alignment.js` | Check wave-1 + wave-2 id/`ref_id` alignment vs dbo (users, sickness/permit + photos, workers, structure, enums, cuti period/master/kerja). Flag `--prod` uses `PROD_DB_*` |
+| `run_migrate_prod.js` | Apply `scripts/hr/*.sql` to Azure via `PROD_DB_*` (confirm gate + allowlist) |
+| `sync_dbo_to_hr_prod.js` | Same-DB `dbo` → `hr` sync on production (`IDENTITY_INSERT`, `legacy_id = id`) |
+| `verify_id_alignment_prod.js` | Prod verify + smoke (`v_user_login`, sickness `by_user` → `users.legacy_id`) |
 
 ### ID cutover policy (dbo → hr)
 
-**Checklist lengkap (wajib dibaca sebelum migrate tabel baru):** [`docs/ID_CUTOVER.md`](docs/ID_CUTOVER.md). Cursor rule: `.cursor/rules/id-cutover.mdc`.
+**Checklist lengkap (wajib dibaca sebelum migrate tabel baru):** [`docs/ID_CUTOVER.md`](docs/ID_CUTOVER.md). Cursor rule: `.cursor/rules/id-cutover.mdc`.  
+**Azure production runbook:** [`docs/AZURE_HR_DEPLOY.md`](docs/AZURE_HR_DEPLOY.md) — skema `hr` sejajar `dbo`; app tulis `hr.*`; `dbo` tetap patokan id; `legacy_id` tetap ada.
 
 Operational tables migrated from `dbo` **preserve the same integer `id`** via `SET IDENTITY_INSERT` (`legacy_id = dbo.id`, so `id = legacy_id`). This keeps `ref_id` / parent–child graphs and views valid across future table migrations.
 
@@ -269,8 +273,12 @@ Sakit is the reference for a staged approval module (queues, SIS/LS scope, bell,
 | `AUTH_DEV_BYPASS` | Set `false` to disable missing-token bypass |
 | `DEFAULT_JOBSITE_ID`, `PUBLIC_JOBSITE_ID` | Default jobsite (`1`) |
 | `AZURE_DB_*` | **Read-only** seed source; writes blocked by `config/azureReadonly.js` |
+| `PROD_DB_*` | Writable Azure target for `run_migrate_prod.js` / `sync_dbo_to_hr_prod.js` only |
+| `PROD_DB_SERVER_ALLOWLIST` | Comma-separated hostnames allowed for prod migrate/sync |
+| `CONFIRM_PROD_MIGRATE` | Must be `YES` to open `PROD_DB_*` |
 
-`DB_SCHEMA` is **legacy** (ticketing/FLEET) and should stay unset. Never commit real secrets. Never point `DB_*` at Azure production.
+`DB_SCHEMA` is **legacy** (ticketing/FLEET) and should stay unset. Never commit real secrets.  
+Day-to-day **local** `DB_*` must not point at Azure. Production app runtime may set `DB_*` to Azure for `hr` writes — see `docs/AZURE_HR_DEPLOY.md`. Never use `AZURE_DB_*` for writes.
 
 ---
 
@@ -296,6 +304,7 @@ To revive any of them you must first port the SP/table to `hr` and remount it in
 - Do keep handlers thin and responses in `{ success, message, data?, meta?, error? }`.
 - Don't use `getDbSchema()` / `DB_SCHEMA` / `ticketing.*` in new code.
 - Don't force every new menu under `/master` when it belongs to another parent folder.
-- Don't write to Azure MYHR; it is a read-only seed source.
+- Don't write to Azure via `AZURE_DB_*` / `azureReadonly.js` (seed is SELECT-only). Schema `hr` DDL/sync on Azure uses `PROD_DB_*` + confirm gate only.
 - Don't commit `.env` secrets.
 - Don't invent a second RBAC model — use `hr.menus` + `hr.level_permissions`.
+- Don't drop `legacy_id` on production mirrors; keep `hr.id = dbo.id` as the migration contract.

@@ -221,7 +221,7 @@ BEGIN
         nrp VARCHAR(20) NULL,
         nrp_int INT NULL,
         nama VARCHAR(250) NULL,
-        shift VARCHAR(2) NULL,
+        shift VARCHAR(10) NULL,
         finger_in DATETIME2 NULL,
         finger_out DATETIME2 NULL,
         unitjigsaw VARCHAR(100) NULL,

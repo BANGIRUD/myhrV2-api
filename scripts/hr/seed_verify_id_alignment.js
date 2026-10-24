@@ -11,11 +11,15 @@
  *   hr.workers_cuti_kerja (windowed sync; dbo_missing outside window is OK)
  *   hr.workers_pola_kerja / workers_roster_kerja (windowed; dbo_missing outside OK)
  *
- * Local DB only (no Azure). Exit 1 on failure.
+ * Default: local DB_* only. With `--prod`: PROD_DB_* + confirm gate
+ * (config/prodDatabase.js). Exit 1 on failure.
  * Soft-warn (no fail) for known legacy orphans also present in dbo
  * (ref_id/department = 0, cuti periode pointing at deleted masters).
  *
- * Usage: node scripts/hr/seed_verify_id_alignment.js
+ * Usage:
+ *   node scripts/hr/seed_verify_id_alignment.js
+ *   node scripts/hr/seed_verify_id_alignment.js --prod
+ *   node scripts/hr/verify_id_alignment_prod.js   (alias for --prod + smoke)
  */
 import dotenv from 'dotenv';
 import sql from 'mssql';
@@ -26,6 +30,12 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: join(__dirname, '..', '..', '.env') });
 
 const JOBSITE_ID = Number(process.env.DEFAULT_JOBSITE_ID || 1);
+const useProd =
+  process.argv.includes('--prod') || process.env.VERIFY_USE_PROD === '1';
+const withSmoke =
+  process.argv.includes('--smoke') ||
+  process.env.VERIFY_SMOKE === '1' ||
+  useProd;
 
 const localConfig = {
   user: process.env.DB_USER,
@@ -42,8 +52,10 @@ const localConfig = {
   requestTimeout: 180000,
 };
 
-if (!localConfig.server || !localConfig.user || !localConfig.password) {
-  throw new Error('Local DB_* env incomplete. Check .env');
+if (!useProd) {
+  if (!localConfig.server || !localConfig.user || !localConfig.password) {
+    throw new Error('Local DB_* env incomplete. Check .env');
+  }
 }
 
 /** Tables where hr.id must equal dbo.id and legacy_id = id when set. */
@@ -136,6 +148,20 @@ async function tableExists(pool, schema, name) {
       FROM sys.tables t
       INNER JOIN sys.schemas s ON s.schema_id = t.schema_id
       WHERE s.name = @schema AND t.name = @name
+    `);
+  return r.recordset.length > 0;
+}
+
+async function viewExists(pool, schema, name) {
+  const r = await pool
+    .request()
+    .input('schema', sql.NVarChar(128), schema)
+    .input('name', sql.NVarChar(128), name)
+    .query(`
+      SELECT 1 AS ok
+      FROM sys.views v
+      INNER JOIN sys.schemas s ON s.schema_id = v.schema_id
+      WHERE s.name = @schema AND v.name = @name
     `);
   return r.recordset.length > 0;
 }
@@ -362,12 +388,87 @@ async function checkCutiPeriodeParity(pool) {
   return 0;
 }
 
+/**
+ * Smoke: login view + sickness list join via hr.users.legacy_id (by_user).
+ * Fail only when objects exist but return hard errors / zero login rows.
+ */
+async function smokeProdRuntime(pool) {
+  let failed = 0;
+
+  if (await viewExists(pool, 'hr', 'v_user_login')) {
+    const login = await pool.request().query(`
+      SELECT COUNT(*) AS n FROM hr.v_user_login;
+      SELECT TOP (3) id, username, level_code, legacy_id
+      FROM hr.v_user_login
+      ORDER BY id;
+    `);
+    const n = login.recordsets[0][0].n;
+    if (n === 0) {
+      failed += 1;
+      console.error('✗ smoke: hr.v_user_login has 0 rows');
+    } else {
+      console.log(`✓ smoke: hr.v_user_login rows=${n}`, login.recordsets[1]);
+    }
+  } else {
+    failed += 1;
+    console.error('✗ smoke: hr.v_user_login view missing');
+  }
+
+  if (
+    (await tableExists(pool, 'hr', 'workers_sickness')) &&
+    (await tableExists(pool, 'hr', 'users'))
+  ) {
+    const join = await pool.request().query(`
+      SELECT TOP (5)
+        m.id,
+        m.by_user,
+        u.id AS user_id,
+        u.username,
+        u.legacy_id
+      FROM hr.workers_sickness m
+      LEFT JOIN hr.users u
+        ON u.legacy_id = TRY_CAST(m.by_user AS INT)
+       AND u.deleted_at IS NULL
+      WHERE m.deleted_at IS NULL
+        AND m.by_user IS NOT NULL
+      ORDER BY m.id DESC;
+    `);
+    const resolved = join.recordset.filter((r) => r.user_id != null).length;
+    console.log(
+      `✓ smoke: sickness by_user→users.legacy_id sample (${resolved}/${join.recordset.length} resolved)`,
+      join.recordset,
+    );
+  } else {
+    console.log('· smoke: skip sickness legacy_id join (tables missing)');
+  }
+
+  return failed;
+}
+
 async function main() {
-  console.log(
-    `Verify id alignment: ${localConfig.server}/${localConfig.database} jobsite=${JOBSITE_ID}`,
-  );
-  const pool = new sql.ConnectionPool(localConfig);
-  await pool.connect();
+  let pool;
+  let closeExtra = async () => {};
+
+  if (useProd) {
+    const { openProdDatabase, prodSql } = await import(
+      '../../config/prodDatabase.js'
+    );
+    const opened = await openProdDatabase();
+    pool = opened.pool;
+    console.log(
+      `Verify id alignment (PROD): ${opened.meta.server}/${opened.meta.database} jobsite=${JOBSITE_ID}`,
+    );
+    closeExtra = async () => {
+      await prodSql.close().catch(() => {});
+    };
+  } else {
+    console.log(
+      `Verify id alignment: ${localConfig.server}/${localConfig.database} jobsite=${JOBSITE_ID}`,
+    );
+    pool = new sql.ConnectionPool(localConfig);
+    await pool.connect();
+  }
+
   let failed = 0;
 
   try {
@@ -444,12 +545,18 @@ async function main() {
       console.log('sample workers_cuti_period dbo↔hr:', sample.recordset);
     }
 
+    if (withSmoke) {
+      console.log('\n-- smoke --');
+      failed += await smokeProdRuntime(pool);
+    }
+
     if (failed) {
       throw new Error(`id alignment failed (${failed} check(s))`);
     }
     console.log('OK all wave-1 + wave-2 id checks passed');
   } finally {
     await pool.close();
+    await closeExtra();
   }
 }
 

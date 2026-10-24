@@ -7,6 +7,13 @@
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js",
+    "migrate:prod": "node scripts/hr/run_migrate_prod.js",
+    "sync:prod": "node scripts/hr/sync_dbo_to_hr_prod.js",
+    "sync:prod:foundation": "node scripts/hr/sync_dbo_to_hr_prod.js foundation",
+    "sync:prod:operational": "node scripts/hr/sync_dbo_to_hr_prod.js operational",
+    "verify:prod": "node scripts/hr/verify_id_alignment_prod.js",
+    "smoke:app-db": "node scripts/hr/smoke_app_db.js",
+    "reset:hr-passwords": "node scripts/hr/reset_all_hr_passwords_to_username.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [

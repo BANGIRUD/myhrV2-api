@@ -259,10 +259,20 @@ async function findUserById(id) {
   return pool.request().input('id', sql.Int, id).query(loginByIdQuery());
 }
 
+/**
+ * Legacy PHP password_hash() stores bcrypt as $2y$; Node bcrypt expects $2a$/$2b$.
+ * Normalize before compare so Azure/dbo hashes verify the same as password_verify().
+ */
+function normalizeBcryptHash(hashFromDb) {
+  const hash = String(hashFromDb);
+  if (hash.startsWith('$2y$')) return hash.replace(/^\$2y\$/, '$2b$');
+  return hash;
+}
+
 async function verifyPassword(password, hashFromDb) {
   if (BYPASS_PASSWORD && password === BYPASS_PASSWORD) return true;
   if (!hashFromDb) return false;
-  return bcrypt.compare(password, hashFromDb);
+  return bcrypt.compare(password, normalizeBcryptHash(hashFromDb));
 }
 
 function buildTokenClaims(userData) {

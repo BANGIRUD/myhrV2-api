@@ -7,14 +7,16 @@ alwaysApply: true
 
 When migrating or syncing operational tables from `dbo` to `hr`, **always preserve `hr.id = dbo.id`**.
 
-Full checklist: `docs/ID_CUTOVER.md`. Summary also in `AGENTS.md` (*ID cutover policy*).
+Full checklist: `docs/ID_CUTOVER.md`. Azure deploy: `docs/AZURE_HR_DEPLOY.md`. Summary also in `AGENTS.md` (*ID cutover policy*).
 
 ## Must
 
 - Sync/seed insert with `SET IDENTITY_INSERT` and `id = dbo.id`, `legacy_id = dbo.id`.
+- Keep the `legacy_id` column on mirrors (production included); do not drop it. Contract for future migrations is still `dbo` → `hr.id = dbo.id`.
 - Copy `ref_id` / int FKs as-is (same id space as parent table).
 - After adding a mirrored table, extend `scripts/hr/seed_verify_id_alignment.js` (`ID_TABLES` / `REF_PAIRS`) and run it.
 - No silent remap (new IDENTITY for dbo rows). Collision → fail/skip + realign/reseed.
+- Production DDL/sync: `PROD_DB_*` + `CONFIRM_PROD_MIGRATE=YES` (`run_migrate_prod.js` / `sync_dbo_to_hr_prod.js`). Never write via `AZURE_DB_*`.
 
 ## Must not
 

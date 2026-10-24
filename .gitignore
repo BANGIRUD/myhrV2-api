@@ -14,10 +14,12 @@ uploads/*
 !uploads/.gitkeep
 *.local
 
-# Env (keep .env.example tracked)
+# Env (keep .env.example / .env.production.example tracked — never real secrets)
 .env
 .env.local
 .env.*.local
+.env.production
+.env.azure
 
 # Editor directories and files
 .vscode/*

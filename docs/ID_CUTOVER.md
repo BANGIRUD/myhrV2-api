@@ -4,13 +4,15 @@ Aturan wajib setiap kali tabel operasional di-migrate dari schema lama (`dbo`) k
 
 Ringkas di [`AGENTS.md`](../AGENTS.md) (bagian *ID cutover policy*). Dokumen ini = checklist kerja.
 
+**Azure production:** skema `hr` boleh hidup sejajar `dbo` di DB yang sama. Patokan id tetap **`dbo`**; kolom `legacy_id` **tetap ada** (mirror: `legacy_id = id`). Runbook deploy: [`AZURE_HR_DEPLOY.md`](./AZURE_HR_DEPLOY.md) (`PROD_DB_*`, `run_migrate_prod.js`, `sync_dbo_to_hr_prod.js`). Seed pull lokal lewat `AZURE_DB_*` tetap read-only.
+
 ---
 
 ## Aturan utama
 
 1. **Preserve integer PK.** Insert dengan `SET IDENTITY_INSERT hr.<table> ON` dan `id = dbo.id`.
-2. **`legacy_id = dbo.id`** pada setiap row hasil sync (mirror; setelah cutover `id = legacy_id`).
-3. **Jangan regenerate id** lalu remap lewat `legacy_id` saja — itu pola `users` yang sudah diperbaiki. Kecuali katalog yang memang bukan mirror (lihat pengecualian).
+2. **`legacy_id = dbo.id`** pada setiap row hasil sync (mirror; setelah cutover `id = legacy_id`). Kolom ini **tetap dipertahankan** di production (bukan diganti oleh “cukup `id` saja”) — dipakai verify, jejak sync, join `by_user` via `hr.users.legacy_id`, dan remap `hr.menus`.
+3. **Jangan regenerate id** lalu remap lewat `legacy_id` saja — itu pola `users` yang sudah diperbaiki. Kecuali katalog yang memang bukan mirror (lihat pengecualian). Patokan migrasi tabel berikutnya = **`dbo`**, bukan mengandalkan `legacy_id` sebagai PK pengganti.
 4. **Copy `ref_id` / FK int apa adanya** (parent id di ruang id yang sama). Jangan translate lewat map kecuali tabel parent sengaja di-remap (menus).
 5. **Row baru dari app** (INSERT SP tanpa `IDENTITY_INSERT`) boleh pakai IDENTITY baru — itu bukan row dbo.
 6. **Verify lokal** setelah sync: `node scripts/hr/seed_verify_id_alignment.js` (perluas daftar tabel di script bila menambah mirror baru).

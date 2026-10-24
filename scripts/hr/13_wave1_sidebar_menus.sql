@@ -41,6 +41,53 @@ BEGIN
     );
 END;
 
+-- Parent: Reconciliation (needed by pola/roster/sakit/ijin/finger menus).
+-- Prefer remapping dbo "Reconciliation" (legacy_id=20) so children stay under same id.
+IF NOT EXISTS (
+    SELECT 1 FROM hr.menus
+    WHERE by_jobsite = @JobsiteId AND menu_code = N'hr_reconciliation' AND deleted_at IS NULL
+)
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM hr.menus
+        WHERE by_jobsite = @JobsiteId
+          AND deleted_at IS NULL
+          AND (
+              legacy_id = 20
+              OR (menu_name = N'Reconciliation' AND parent_id IS NULL)
+          )
+    )
+    BEGIN
+        UPDATE hr.menus
+        SET menu_code = N'hr_reconciliation',
+            menu_url = N'#',
+            menu_type = N'parents',
+            show_sidebar = 1,
+            is_active = 1,
+            icon = ISNULL(icon, N'check-circle'),
+            updated_at = SYSUTCDATETIME(),
+            updated_by = NULL
+        WHERE by_jobsite = @JobsiteId
+          AND deleted_at IS NULL
+          AND (
+              legacy_id = 20
+              OR (menu_name = N'Reconciliation' AND parent_id IS NULL)
+          )
+          AND menu_code <> N'hr_reconciliation';
+    END
+    ELSE
+    BEGIN
+        INSERT INTO hr.menus (
+            by_jobsite, menu_code, menu_name, menu_url, icon, menu_type,
+            parent_id, sort_order, show_sidebar, is_active, description, created_by
+        )
+        VALUES (
+            @JobsiteId, N'hr_reconciliation', N'Reconciliation', N'#', N'check-circle', N'parents',
+            NULL, 30, 1, 1, N'Reconciliation folder for work pattern / roster / SIA', NULL
+        );
+    END
+END;
+
 DECLARE @MasterId INT = (
     SELECT TOP 1 id FROM hr.menus
     WHERE by_jobsite = @JobsiteId AND menu_code = N'hr_master' AND deleted_at IS NULL
