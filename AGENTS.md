@@ -90,6 +90,9 @@ All active code targets SQL Server schema **`hr`** (`HR_SCHEMA`, default `hr`), 
 | `/api/dashboard` | `GET /attendance?date=&shift=all\|day\|night&department=&section=` |
 | | `GET /work-pattern?month=YYYY-MM&department=&section=`, `GET /employee-unfit?department=&section=` |
 | `/api/hr` | `GET /jobsites`, `GET /levels`, `GET /submissions`, `GET /structure?type=&ref_id=` |
+| | `GET /workers?source=sis\|vendor\|ls&status_mode=active\|inactive\|all&department=&section=&job_rank=&status=&vendor=&lokasi_kerja=&q=&page=&page_size=` |
+| | `GET /workers/:id?source=sis\|vendor\|ls` — full master row + joined names; Grade gated by Edit Policy `workers_grade` (`meta.can_view_grade`) |
+| | `GET /workers/example?source=sis\|vendor\|ls`, `GET /workers/export?source=…` (Grade column only if `workers_grade`), `POST /workers/import?source=…` (INSERT-only; duplicate NRP skipped) |
 | | `GET/POST /users`, `GET/PUT/DELETE /users/:id`, `POST /users/:id/reset-password` |
 | | `GET/POST /menus`, `GET/PUT/DELETE /menus/:id` |
 | | `GET/POST /enums`, `GET /enums/types`, `GET/PUT/DELETE /enums/:id` |
@@ -208,6 +211,10 @@ Run in numeric order (`run_migrate.js` does this). Key files:
 | `85_finger_error_gl_dept.sql` | GL/DEPT on `FINGER_ERROR_SP` + `hr.finger_error_department_exception` (same rules as sakit/ijin) |
 | `86_finger_error_gl_dept_menus.sql` | menus `hr_finger_error_group` / `hr_finger_error_department` |
 | `87_finger_error_inbox_gl_dept.sql` | inbox routing LS→GL, high-rank/exception→DH |
+| `88_workers_sp.sql` | `hr.WORKERS_SP` (`SELECT` / `GET`, `@SOURCE` sis\|vendor) — paged employee master + detail with joins |
+| `89_employees_menus.sql` | parent `hr_employees` + `hr_employees_sis` / `hr_employees_ls` + read grants (audience sis/ls for `hr_admin`) |
+| `90_workers_grade_policy.sql` | Edit Policy module `workers_grade` — who may reveal Grade on employee detail (`can_edit`); default `superadmin`/`sa`/`hr_administrator` |
+| `91_workers_import_export.sql` | `WORKERS_SP` `INSERT` + `SELECT_EXPORT`; grant `can_insert`/`can_export` on `hr_employees_sis`/`hr_employees_ls` |
 | `54_audit_by_user_id.sql` | convert `created_by`/`updated_by`/`deleted_by` NVARCHAR→`INT` (`hr.users.id`). Apply alone first, then re-apply SPs: `node scripts/hr/run_migrate.js 14 15 25 28 36 39 42 46 48 49 52` |
 | `50_reconciliation_menu_urls.sql` | move pola/roster menu URLs off `/master` onto `/reconciliation/…` |
 | `51_sidebar_menu_icons.sql` | distinct `hr.menus.icon` keys (must match frontend `sidebarIcons.tsx`) |

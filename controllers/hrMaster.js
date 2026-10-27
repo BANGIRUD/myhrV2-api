@@ -19,6 +19,11 @@ import {
   buildRosterExportXlsx,
   parseWorkPatternSpreadsheet,
 } from '../services/workPatternImport.js';
+import {
+  buildWorkersExampleXlsx,
+  parseWorkersSpreadsheet,
+} from '../services/workersImport.js';
+import { buildWorkersExportXlsx } from '../services/workersExport.js';
 import { buildSicknessHrExportXlsx } from '../services/sicknessExport.js';
 import { notifySicknessCreated, notifySicknessHr } from '../services/sicknessNotify.js';
 import { logActivity } from '../services/activityLog.js';
@@ -779,6 +784,406 @@ export async function listEnums(req, res) {
     });
   } catch (error) {
     res.status(500).json({ success: false, message: 'Server error', error: error.message });
+  }
+}
+
+/** Map UI/query aliases to SP @SOURCE (sis | vendor). */
+function workersSourceOf(raw) {
+  const value = String(raw || '').trim().toLowerCase();
+  if (value === 'sis') return 'sis';
+  if (value === 'vendor' || value === 'ls') return 'vendor';
+  return null;
+}
+
+function optionalIntQuery(value) {
+  if (value === undefined || value === null || String(value).trim() === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** active | inactive | all — default active (matches hr.v_workers_active). */
+function workersStatusModeOf(raw) {
+  const value = String(raw || '')
+    .trim()
+    .toLowerCase();
+  if (value === 'inactive' || value === 'all' || value === 'active') return value;
+  return 'active';
+}
+
+/** GET /api/hr/workers?source=sis|vendor|ls — paged employee master (read-only). */
+export async function listWorkers(req, res) {
+  try {
+    const source = workersSourceOf(req.query.source);
+    if (!source) {
+      return res.status(400).json({
+        success: false,
+        message: 'Query source is required (sis or vendor/ls).',
+      });
+    }
+
+    const result = await executeHrSp('WORKERS_SP', 'SELECT', {
+      BY_JOBSITE: jobsiteOf(req),
+      SOURCE: source,
+      DEPARTMENT: optionalIntQuery(req.query.department),
+      SECTION: optionalIntQuery(req.query.section),
+      JOB_RANK: optionalIntQuery(req.query.job_rank),
+      STATUS: optionalIntQuery(req.query.status),
+      STATUS_MODE: workersStatusModeOf(req.query.status_mode),
+      VENDOR: req.query.vendor?.trim() || null,
+      LOKASI_KERJA: req.query.lokasi_kerja?.trim() || null,
+      SEARCH: req.query.q?.trim() || null,
+      PAGE: Number(req.query.page) || 1,
+      PAGE_SIZE: Number(req.query.page_size) || 0,
+    });
+
+    const first = result.recordsets?.[0] ?? [];
+    // Invalid SOURCE / CATCH returns a single { success, message } row — not a list.
+    if (
+      first.length === 1 &&
+      Object.prototype.hasOwnProperty.call(first[0], 'success') &&
+      Number(first[0].success) === 0
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: first[0].message || 'Workers query failed.',
+      });
+    }
+
+    // Grade is sensitive — never expose on list; reveal only via GET + edit_policy.
+    const data = (first || []).map((row) => {
+      if (!row || typeof row !== 'object') return row;
+      const { grade: _grade, ...rest } = row;
+      return rest;
+    });
+
+    res.json({
+      success: true,
+      message: 'Fetched workers',
+      data,
+      meta: { total: result.recordsets?.[1]?.[0]?.total_count ?? 0 },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
+  }
+}
+
+/**
+ * Grade field reveal — driven by hr.edit_policy module `workers_grade`
+ * (can_edit = may reveal). Missing row → deny.
+ */
+async function canViewWorkersGrade(req) {
+  const levelCode = levelCodeOf(req);
+  if (!levelCode) return false;
+
+  const schema = schemaName();
+  const pool = await getConnection();
+  const result = await pool
+    .request()
+    .input('BY_JOBSITE', jobsiteOf(req))
+    .input('LEVEL_CODE', levelCode)
+    .query(`
+      SELECT TOP 1 CAST(can_edit AS INT) AS can_edit
+      FROM ${schema}.edit_policy
+      WHERE by_jobsite = @BY_JOBSITE
+        AND deleted_at IS NULL
+        AND module_code = N'workers_grade'
+        AND LOWER(level_code) = @LEVEL_CODE
+    `);
+
+  return Number(result.recordset?.[0]?.can_edit) === 1;
+}
+
+/** GET /api/hr/workers/:id?source=sis|vendor|ls — full master row with joined names. */
+export async function getWorker(req, res) {
+  try {
+    if (!isValidId(req.params.id)) {
+      return res.status(400).json({ success: false, message: 'Invalid worker id.' });
+    }
+    const source = workersSourceOf(req.query.source);
+    if (!source) {
+      return res.status(400).json({
+        success: false,
+        message: 'Query source is required (sis or vendor/ls).',
+      });
+    }
+
+    const result = await executeHrSp('WORKERS_SP', 'GET', {
+      BY_JOBSITE: jobsiteOf(req),
+      SOURCE: source,
+      ID: Number(req.params.id),
+    });
+
+    const first = result.recordsets?.[0] ?? result.recordset ?? [];
+    if (
+      first.length === 1 &&
+      Object.prototype.hasOwnProperty.call(first[0], 'success') &&
+      Number(first[0].success) === 0
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: first[0].message || 'Workers GET failed.',
+      });
+    }
+
+    const row = first[0];
+    if (!row) {
+      return res.status(404).json({ success: false, message: 'Worker not found.' });
+    }
+
+    const canViewGrade = await canViewWorkersGrade(req);
+    const data = { ...row };
+    if (!canViewGrade) {
+      data.grade = null;
+    }
+
+    res.json({
+      success: true,
+      message: 'Fetched worker',
+      data,
+      meta: { can_view_grade: canViewGrade },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
+  }
+}
+
+/** GET /api/hr/workers/example?source=sis|vendor|ls */
+export async function downloadWorkersExample(req, res) {
+  try {
+    const source = workersSourceOf(req.query.source);
+    if (!source) {
+      return res.status(400).json({
+        success: false,
+        message: 'Query source is required (sis or vendor/ls).',
+      });
+    }
+    const buffer = buildWorkersExampleXlsx(source);
+    const filename =
+      source === 'sis' ? 'example_employees_sis.xlsx' : 'example_employees_ls.xlsx';
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    return res.status(200).send(Buffer.from(buffer));
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message,
+    });
+  }
+}
+
+/** GET /api/hr/workers/export?source=… — Grade column only when workers_grade allows */
+export async function exportWorkers(req, res) {
+  try {
+    const source = workersSourceOf(req.query.source);
+    if (!source) {
+      return res.status(400).json({
+        success: false,
+        message: 'Query source is required (sis or vendor/ls).',
+      });
+    }
+
+    const result = await executeHrSp('WORKERS_SP', 'SELECT_EXPORT', {
+      BY_JOBSITE: jobsiteOf(req),
+      SOURCE: source,
+      DEPARTMENT: optionalIntQuery(req.query.department),
+      SECTION: optionalIntQuery(req.query.section),
+      JOB_RANK: optionalIntQuery(req.query.job_rank),
+      STATUS: optionalIntQuery(req.query.status),
+      STATUS_MODE: workersStatusModeOf(req.query.status_mode),
+      VENDOR: req.query.vendor?.trim() || null,
+      LOKASI_KERJA: req.query.lokasi_kerja?.trim() || null,
+      SEARCH: req.query.q?.trim() || null,
+    });
+
+    const first = result.recordsets?.[0] ?? result.recordset ?? [];
+    if (
+      first.length === 1 &&
+      Object.prototype.hasOwnProperty.call(first[0], 'success') &&
+      Number(first[0].success) === 0
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: first[0].message || 'Workers export failed.',
+      });
+    }
+
+    const includeGrade = await canViewWorkersGrade(req);
+    const buffer = buildWorkersExportXlsx(first, source, includeGrade);
+    const stamp = new Date().toISOString().slice(0, 10);
+    const filename =
+      source === 'sis'
+        ? `employees_sis_${stamp}.xlsx`
+        : `employees_ls_${stamp}.xlsx`;
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    return res.status(200).send(Buffer.from(buffer));
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message,
+    });
+  }
+}
+
+/**
+ * POST /api/hr/workers/import?source=sis|vendor|ls — multipart field `file`
+ * INSERT-only; duplicate active NRP → skipped error. Grade applied only if allowed.
+ */
+export async function importWorkers(req, res) {
+  try {
+    const source = workersSourceOf(req.query.source);
+    if (!source) {
+      return res.status(400).json({
+        success: false,
+        message: 'Query source is required (sis or vendor/ls).',
+      });
+    }
+    if (!req.file?.buffer) {
+      return res.status(400).json({
+        success: false,
+        message: 'Upload a spreadsheet file in field "file".',
+      });
+    }
+
+    const parsed = parseWorkersSpreadsheet(
+      req.file.buffer,
+      req.file.originalname,
+      source,
+    );
+    if (parsed.error) {
+      return res.status(400).json({ success: false, message: parsed.error });
+    }
+    if (!parsed.rows.length) {
+      return res.status(400).json({
+        success: false,
+        message: 'No data rows found after the header.',
+      });
+    }
+
+    const canSetGrade = await canViewWorkersGrade(req);
+    const byUser = actorOf(req);
+    const byJobsite = jobsiteOf(req);
+    let inserted = 0;
+    const errors = [];
+
+    for (const row of parsed.rows) {
+      if (!row.nrp || !row.full_name) {
+        errors.push({
+          row: row.excelRow,
+          nrp: row.nrp || null,
+          reason: 'nrp and full_name are required.',
+        });
+        continue;
+      }
+      if (source === 'vendor' && (!row.vendor || !row.id_finger)) {
+        errors.push({
+          row: row.excelRow,
+          nrp: row.nrp,
+          reason: 'vendor and id_finger are required for LS.',
+        });
+        continue;
+      }
+
+      try {
+        const result = await executeHrSp('WORKERS_SP', 'INSERT', {
+          SOURCE: source,
+          NRP: row.nrp,
+          FULL_NAME: row.full_name,
+          JABATAN: row.jabatan,
+          DEPARTMENT_TEXT: row.department,
+          SECTION_TEXT: row.section,
+          STATUS_TEXT: row.status,
+          LEVEL_JABATAN: row.level_jabatan,
+          KLASIFIKASI_JABATAN: row.klasifikasi_jabatan,
+          JOB_RANK_TEXT: row.job_rank,
+          GRADE: canSetGrade ? row.grade : null,
+          AREA_KERJA: row.area_kerja,
+          STATUS_KARYAWAN_TEXT: row.status_karyawan,
+          LOKASI_KERJA: row.lokasi_kerja,
+          STAFF_NONSTAFF: row.staff_nonstaff,
+          POH: row.poh,
+          TANGGAL_MASUK: row.tanggal_masuk,
+          TANGGAL_AKHIRKONTRAK: row.tanggal_akhirkontrak,
+          TANGGAL_EFEKTIF_DIADARO: row.tanggal_efektif_diadaro,
+          TEMPAT_LAHIR: row.tempat_lahir,
+          KABUPATEN_LAHIR: row.kabupaten_lahir,
+          PROVINSI_LAHIR: row.provinsi_lahir,
+          TANGGAL_LAHIR: row.tanggal_lahir,
+          PENDIDIKAN: row.pendidikan,
+          NAMA_SEKOLAH: row.nama_sekolah,
+          JURUSAN: row.jurusan,
+          NO_IJASAH: row.no_ijasah,
+          TANGGAL_MASUK_SEKOLAH: row.tanggal_masuk_sekolah,
+          TANGGAL_LULUS_SEKOLAH: row.tanggal_lulus_sekolah,
+          AGAMA: row.agama,
+          SUKU: row.suku,
+          GOLONGAN_DARAH: row.golongan_darah,
+          DIRECT_INDIRECT: row.direct_indirect,
+          REMARK_TEXT: row.remark,
+          GENDER: row.gender,
+          STATUS_KELUARGA: row.status_keluarga,
+          ALAMAT: row.alamat,
+          ID_FINGER: row.id_finger,
+          VENDOR: row.vendor,
+          BY_USER: byUser,
+          BY_JOBSITE: byJobsite,
+        });
+        const outcome = spResultRow(result);
+        if (outcome?.success) {
+          inserted += 1;
+        } else {
+          errors.push({
+            row: row.excelRow,
+            nrp: row.nrp,
+            reason: outcome?.message || 'Insert failed.',
+          });
+        }
+      } catch (err) {
+        errors.push({
+          row: row.excelRow,
+          nrp: row.nrp,
+          reason: err.message || 'Insert failed.',
+        });
+      }
+    }
+
+    const skipped = errors.length;
+    if (inserted > 0) {
+      logActivity(req, {
+        module: 'workers',
+        action: 'IMPORT',
+        recordKey: source,
+        message: `Import workers source=${source} inserted=${inserted} skipped=${skipped}`,
+      });
+    }
+
+    return res.status(inserted > 0 ? 200 : 400).json({
+      success: inserted > 0,
+      message:
+        inserted > 0
+          ? `Imported ${inserted} worker(s); ${skipped} skipped.`
+          : `No rows imported; ${skipped} skipped.`,
+      data: {
+        inserted,
+        skipped,
+        total: parsed.rows.length,
+        errors,
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message,
+    });
   }
 }
 

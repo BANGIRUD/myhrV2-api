@@ -11,6 +11,11 @@ import {
   listLevels,
   listSubmissions,
   listStructure,
+  listWorkers,
+  getWorker,
+  downloadWorkersExample,
+  exportWorkers,
+  importWorkers,
   listUsers,
   getUser,
   createUser,
@@ -140,6 +145,16 @@ router.get('/jobsites', verifyToken, listJobsites);
 router.get('/submissions', verifyToken, listSubmissions);
 router.get('/levels', verifyToken, listLevels);
 router.get('/structure', verifyToken, listStructure);
+router.get('/workers', verifyToken, listWorkers);
+router.get('/workers/example', verifyToken, downloadWorkersExample);
+router.get('/workers/export', verifyToken, exportWorkers);
+router.post(
+  '/workers/import',
+  verifyToken,
+  uploadExcelFile,
+  importWorkers,
+);
+router.get('/workers/:id', verifyToken, getWorker);
 
 router.get('/users', verifyToken, listUsers);
 router.post('/users/:id/reset-password', verifyToken, resetUserPassword);
