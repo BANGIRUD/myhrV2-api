@@ -83,6 +83,10 @@ import {
   listMenuPrivilege,
   listLevelPermissions,
   upsertLevelPermissions,
+  getFingerPulseStatus,
+  listFingerPulse,
+  listFingerPulsePunches,
+  runFingerPulse,
 } from '../controllers/hrMaster.js';
 import {
   listPermit,
@@ -248,6 +252,11 @@ router.post('/permit', verifyToken, uploadPermitEvidence, createPermit);
 router.post('/permit/:id/cancel', verifyToken, cancelPermit);
 router.get('/permit/:id', verifyToken, getPermit);
 router.put('/permit/:id', verifyToken, updatePermit);
+
+router.get('/finger-pulse/status', verifyToken, getFingerPulseStatus);
+router.get('/finger-pulse/punches', verifyToken, listFingerPulsePunches);
+router.post('/finger-pulse/run', verifyToken, runFingerPulse);
+router.get('/finger-pulse', verifyToken, listFingerPulse);
 
 router.get('/finger-error', verifyToken, listFingerError);
 router.get('/finger-error/section', verifyToken, listFingerErrorSection);

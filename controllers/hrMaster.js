@@ -31,6 +31,11 @@ import {
   applyReconAutoApprove,
   isReconAutoApproveLevel,
 } from '../services/reconAutoApprove.js';
+import {
+  closeStaleFingerPulseRuns,
+  getFingerPulseRunLock,
+  runFingerPulseIngest,
+} from '../services/fingerPulseRunner.js';
 const BCRYPT_ROUNDS = 10;
 
 function schemaName() {
@@ -96,9 +101,14 @@ async function listQuery(sqlText, byJobsite) {
   return result.recordset || [];
 }
 
-async function executeHrSp(procedureName, action, params = {}) {
+async function executeHrSp(procedureName, action, params = {}, options = {}) {
   const pool = await getConnection();
-  const request = pool.request().input('ACTION_SP', sql.NVarChar, action);
+  // mssql v12: per-request timeout via request({ requestTimeout }) — request.timeout is ignored.
+  const request =
+    options.timeout != null
+      ? pool.request({ requestTimeout: Number(options.timeout) })
+      : pool.request();
+  request.input('ACTION_SP', sql.NVarChar, action);
 
   for (const [key, value] of Object.entries(params)) {
     if (value === undefined) continue;
@@ -3427,5 +3437,257 @@ export async function upsertLevelPermissions(req, res) {
     });
   } catch (error) {
     res.status(500).json({ success: false, message: 'Server error', error: error.message });
+  }
+}
+
+/** Ops status for Biostar Finger Pulse ingest (watermarks + recent runs). */
+export async function getFingerPulseStatus(req, res) {
+  try {
+    const byJobsite = Number(req.user?.by_jobsite) || Number(process.env.DEFAULT_JOBSITE_ID) || 1;
+    const pool = await getConnection();
+    await closeStaleFingerPulseRuns(pool, 5);
+    const result = await executeHrSp('FINGER_PULSE_SP', 'STATUS', {
+      BY_JOBSITE: byJobsite,
+    });
+    const sets = result.recordsets || [];
+    res.json({
+      success: true,
+      message: 'Finger Pulse status',
+      data: {
+        watermarks: sets[0] || [],
+        recent_runs: sets[1] || [],
+        config: sets[2]?.[0] || null,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message,
+    });
+  }
+}
+
+/** Combined person-day viewer (mesin + OAMS). */
+export async function listFingerPulse(req, res) {
+  try {
+    const byJobsite = Number(req.user?.by_jobsite) || Number(process.env.DEFAULT_JOBSITE_ID) || 1;
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const pageSize = Math.min(200, Math.max(1, Number(req.query.page_size) || 25));
+    const date =
+      req.query.date && String(req.query.date).trim()
+        ? String(req.query.date).trim().slice(0, 10)
+        : null;
+    const result = await executeHrSp(
+      'FINGER_PULSE_SP',
+      'SELECT',
+      {
+        DATE: date,
+        SEARCH: req.query.q ? String(req.query.q).slice(0, 100) : null,
+        SOURCE: req.query.source ? String(req.query.source).slice(0, 20) : 'all',
+        COMPLETENESS: req.query.completeness
+          ? String(req.query.completeness).slice(0, 30)
+          : 'all',
+        PAGE: page,
+        PAGE_SIZE: pageSize,
+        BY_JOBSITE: byJobsite,
+      },
+      { timeout: 120000 },
+    );
+    const sets = result.recordsets || [];
+    const rows = sets[0] || [];
+    const summary = sets[1]?.[0] || {};
+    const byStructure = sets[2] || [];
+    const missingOutPeople = sets[3] || [];
+    const total = Number(summary.total_count) || 0;
+    const toIsoDay = (v) => {
+      if (v == null) return null;
+      if (v instanceof Date && !Number.isNaN(v.getTime())) {
+        const y = v.getFullYear();
+        const m = String(v.getMonth() + 1).padStart(2, '0');
+        const d = String(v.getDate()).padStart(2, '0');
+        return `${y}-${m}-${d}`;
+      }
+      const s = String(v);
+      return /^\d{4}-\d{2}-\d{2}/.test(s) ? s.slice(0, 10) : s;
+    };
+    res.json({
+      success: true,
+      message: 'Finger Pulse person-day list',
+      data: rows,
+      meta: {
+        total,
+        page,
+        page_size: pageSize,
+        summary: {
+          machine_count: Number(summary.machine_count) || 0,
+          oams_count: Number(summary.oams_count) || 0,
+          both_count: Number(summary.both_count) || 0,
+          fingered_count: Number(summary.fingered_count) || 0,
+          complete_count: Number(summary.complete_count) || 0,
+          missing_out_count: Number(summary.missing_out_count) || 0,
+          no_in_count: Number(summary.no_in_count) || 0,
+        },
+        by_structure: byStructure.map((r) => ({
+          department_name: r.department_name || '(Tanpa department)',
+          section_name: r.section_name || '(Tanpa section)',
+          person_count: Number(r.person_count) || 0,
+          fingered_count: Number(r.fingered_count) || 0,
+          complete_count: Number(r.complete_count) || 0,
+          missing_out_count: Number(r.missing_out_count) || 0,
+          no_in_count: Number(r.no_in_count) || 0,
+          non_oams_count: Number(r.non_oams_count) || 0,
+          oams_count: Number(r.oams_count) || 0,
+        })),
+        missing_out_people: missingOutPeople.map((r) => ({
+          date: toIsoDay(r.date),
+          nrp: r.nrp != null ? String(r.nrp) : '',
+          full_name: r.full_name != null ? String(r.full_name) : '',
+          finger_in: r.finger_in ?? r.machine_in ?? r.oams_in ?? null,
+          finger_out: r.finger_out ?? null,
+          department_name: r.department_name || '(Tanpa department)',
+          section_name: r.section_name || '(Tanpa section)',
+        })),
+      },
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message,
+    });
+  }
+}
+
+/** Machine punch timeline for one NRP + date. */
+export async function listFingerPulsePunches(req, res) {
+  try {
+    const byJobsite = Number(req.user?.by_jobsite) || Number(process.env.DEFAULT_JOBSITE_ID) || 1;
+    const nrp = String(req.query.nrp || '').trim();
+    const date = String(req.query.date || '').trim().slice(0, 10);
+    if (!nrp || !date) {
+      return res.status(400).json({
+        success: false,
+        message: 'nrp and date are required.',
+      });
+    }
+    const result = await executeHrSp('FINGER_PULSE_SP', 'PUNCHES', {
+      NRP: nrp,
+      DATE: date,
+      BY_JOBSITE: byJobsite,
+    });
+    const rows = result.recordset || result.recordsets?.[0] || [];
+    if (rows[0] && rows[0].success === false) {
+      return res.status(400).json({
+        success: false,
+        message: rows[0].message || 'Failed to load punches.',
+      });
+    }
+    res.json({
+      success: true,
+      message: 'Finger Pulse punches',
+      data: rows,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message,
+    });
+  }
+}
+
+function canRunFingerPulse(req) {
+  const level = String(req.user?.level_code || req.user?.level || '')
+    .trim()
+    .toLowerCase();
+  return level === 'superadmin' || level === 'sa' || level === 'hr_administrator';
+}
+
+/**
+ * POST /api/hr/finger-pulse/run
+ * Manual trigger (same as CLI): pulse | reconcile | backfill.
+ * Body: { action, date_from?, date_to? }
+ */
+export async function runFingerPulse(req, res) {
+  if (!canRunFingerPulse(req)) {
+    return res.status(403).json({
+      success: false,
+      message: 'Only HR administrator or superadmin can run Finger Pulse.',
+    });
+  }
+
+  const action = String(req.body?.action || req.body?.mode || '')
+    .trim()
+    .toLowerCase();
+  if (!['pulse', 'reconcile', 'backfill'].includes(action)) {
+    return res.status(400).json({
+      success: false,
+      message: 'action must be pulse, reconcile, or backfill.',
+    });
+  }
+
+  const dateFrom =
+    req.body?.date_from != null ? String(req.body.date_from).trim().slice(0, 10) : null;
+  const dateTo =
+    req.body?.date_to != null ? String(req.body.date_to).trim().slice(0, 10) : null;
+
+  const lock = getFingerPulseRunLock();
+  if (lock) {
+    return res.status(409).json({
+      success: false,
+      message: `Finger Pulse already running (${lock.mode} since ${lock.startedAt}).`,
+      data: { lock },
+    });
+  }
+
+  // Biostar pulls can take several minutes (especially backfill).
+  req.setTimeout?.(900000);
+  res.setTimeout?.(900000);
+
+  try {
+    const pool = await getConnection();
+    const outcome = await runFingerPulseIngest(pool, {
+      mode: action,
+      dateFrom,
+      dateTo,
+      log: (msg, extra) => {
+        if (extra !== undefined) console.log(`[finger-pulse] ${msg}`, extra);
+        else console.log(`[finger-pulse] ${msg}`);
+      },
+    });
+    const status = outcome.success ? 200 : 502;
+    return res.status(status).json({
+      success: outcome.success,
+      message: outcome.message,
+      data: outcome,
+    });
+  } catch (error) {
+    const code = error?.code;
+    if (code === 'BUSY') {
+      return res.status(409).json({
+        success: false,
+        message: error.message,
+        data: { lock: error.lock || getFingerPulseRunLock() },
+      });
+    }
+    if (code === 'BAD_WINDOW' || code === 'BAD_MODE') {
+      return res.status(400).json({
+        success: false,
+        message: error.message,
+      });
+    }
+    if (code === 'DISABLED') {
+      return res.status(503).json({
+        success: false,
+        message: error.message,
+      });
+    }
+    console.error('[finger-pulse] run failed', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Finger Pulse run failed',
+      error: error.message,
+    });
   }
 }

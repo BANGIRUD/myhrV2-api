@@ -100,6 +100,10 @@ All active code targets SQL Server schema **`hr`** (`HR_SCHEMA`, default `hr`), 
 | | `GET /roster`, `GET /roster/export`, `GET /roster/edit-policy`, `GET/PUT /roster/:id` |
 | | `GET /sickness`, `GET /sickness/section`, `GET /sickness/group`, `GET /sickness/lookup?nrp=`, `GET /sickness/evidence?path=`, `GET /sickness/evidence/:photoId`, `POST /sickness` (multipart + optional `files[]`), `PUT /sickness/:id`, `POST /sickness/:id/cancel`, `POST /sickness/:id/approve-section`, `POST /sickness/:id/reject-section`, `GET /sickness/department`, `GET/POST /sickness/department-exceptions`, `DELETE /sickness/department-exceptions/:id`, `POST /sickness/:id/approve-department`, `POST /sickness/:id/reject-department`, `POST /sickness/:id/approve-group`, `POST /sickness/:id/reject-group`, `GET /sickness/hr`, `GET /sickness/hr/export`, `POST /sickness/:id/approve-hr`, `POST /sickness/:id/reject-hr`, `GET /sickness/:id` |
 | | `GET /permit`, `GET /permit/section`, `GET /permit/group`, `GET /permit/lookup?nrp=`, `GET /permit/evidence?path=`, `GET /permit/evidence/:photoId`, `POST /permit` (multipart + optional `files[]`), `PUT /permit/:id`, `POST /permit/:id/cancel`, `POST /permit/:id/approve-section`, `POST /permit/:id/reject-section`, `GET /permit/department`, `GET/POST /permit/department-exceptions`, `DELETE /permit/department-exceptions/:id`, `POST /permit/:id/approve-department`, `POST /permit/:id/reject-department`, `POST /permit/:id/approve-group`, `POST /permit/:id/reject-group`, `GET /permit/hr`, `GET /permit/hr/export`, `POST /permit/:id/approve-hr`, `POST /permit/:id/reject-hr`, `GET /permit/:id` |
+| | `GET /finger-pulse` — person-day gabungan mesin+OAMS (`date`, `q`, `source`, `completeness`, page) |
+| | `GET /finger-pulse/punches?date=&nrp=` — timeline punch mesin |
+| | `GET /finger-pulse/status` — Biostar Finger Pulse watermarks / recent runs (see `docs/FINGER_PULSE.md`) |
+| | `POST /finger-pulse/run` — manual pulse/reconcile/backfill (superadmin / sa / hr_administrator; see `docs/FINGER_PULSE.md`) |
 | | `GET /finger-error`, `GET /finger-error/section`, `GET /finger-error/group`, `GET /finger-error/department`, `GET /finger-error/lookup?nrp=`, `GET /finger-error/example`, `POST /finger-error/import` (multipart `file` + `category` + `mode`), `GET/POST /finger-error/department-exceptions`, `DELETE /finger-error/department-exceptions/:id`, `GET /finger-error/evidence?path=`, `GET /finger-error/evidence/:photoId`, `POST /finger-error` (multipart + optional `files[]`), `PUT /finger-error/:id`, `POST /finger-error/:id/cancel`, `POST /finger-error/:id/approve-section|group|department|hr`, `POST /finger-error/:id/reject-section|group|department|hr`, `GET /finger-error/hr`, `GET /finger-error/hr/export`, `GET /finger-error/:id` |
 | `/api/notifications` | `GET /` catch-up inbox (sickness, permit, finger-error) |
 | `/ws` | WebSocket on the same HTTP port (`?token=`). In-memory presence. `POST /sickness`, `POST /permit`, and `POST /finger-error` publish to the online atasan. |
@@ -215,6 +219,12 @@ Run in numeric order (`run_migrate.js` does this). Key files:
 | `89_employees_menus.sql` | parent `hr_employees` + `hr_employees_sis` / `hr_employees_ls` + read grants (audience sis/ls for `hr_admin`) |
 | `90_workers_grade_policy.sql` | Edit Policy module `workers_grade` — who may reveal Grade on employee detail (`can_edit`); default `superadmin`/`sa`/`hr_administrator` |
 | `91_workers_import_export.sql` | `WORKERS_SP` `INSERT` + `SELECT_EXPORT`; grant `can_insert`/`can_export` on `hr_employees_sis`/`hr_employees_ls` |
+| `92_finger_pulse.sql` | Finger Pulse DDL: config / watermark / run / raw / stage tables |
+| `93_finger_pulse_sp.sql` | `hr.FINGER_PULSE_SP` (`PROMOTE` / `STATUS` / `PURGE`) — stage → raw → `workers_finger_log` / `workers_finger_oams` |
+| `94_finger_pulse_sqlagent.sql` | Schedule templates (CmdExec → Node; avoids MSDTC on linked INSERT…EXEC) |
+| `95_finger_pulse_view.sql` | Extends `FINGER_PULSE_SP` with `SELECT` / `PUNCHES` (person-day viewer) |
+| `96_finger_pulse_menu.sql` | menu `hr_finger_pulse` (`/reconciliation/finger-pulse`) read for all levels |
+| `run_finger_pulse.js` | Pull Biostar via linked server + stage + PROMOTE (see `docs/FINGER_PULSE.md`) |
 | `54_audit_by_user_id.sql` | convert `created_by`/`updated_by`/`deleted_by` NVARCHAR→`INT` (`hr.users.id`). Apply alone first, then re-apply SPs: `node scripts/hr/run_migrate.js 14 15 25 28 36 39 42 46 48 49 52` |
 | `50_reconciliation_menu_urls.sql` | move pola/roster menu URLs off `/master` onto `/reconciliation/…` |
 | `51_sidebar_menu_icons.sql` | distinct `hr.menus.icon` keys (must match frontend `sidebarIcons.tsx`) |
